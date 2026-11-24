@@ -1,4 +1,10 @@
-dde-wlroots (0.20.2-1) unstable; urgency=medium
+dde-wlroots (0.20.2.1) unstable; urgency=medium
+
+  * feat: expose feature vars and skip install as subproject
+
+ -- rewine <luhongxu@deepin.org>  Tue, 24 Nov 2026 20:53:38 +0800
+
+dde-wlroots (0.20.2.0) unstable; urgency=medium
 
   * Import wlroots 0.20.2 from the treeland git subtree as its own project.
   * Build libdde-wlroots.a statically and ship only the development
