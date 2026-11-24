@@ -13,6 +13,12 @@ project(DdeWlroots
     VERSION 0.20.2
     LANGUAGES C)
 
+# When built as a subproject (e.g. Treeland via FetchContent), the parent
+# project owns installation; do not register install rules in that case.
+if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(DDE_WLROOTS_AS_SUBPROJECT TRUE)
+endif()
+
 # Upstream source tree (this repository's root; no CMake files inside it).
 set(WLROOTS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 if(NOT EXISTS "${WLROOTS_SOURCE_DIR}/include/wlr")
@@ -540,24 +546,26 @@ endif()
 # metadata). There is no runtime package. Protocol XMLs and documentation are
 # deliberately not installed.
 # ---------------------------------------------------------------------------
-install(TARGETS dde-wlroots
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
+if(NOT DDE_WLROOTS_AS_SUBPROJECT)
+    install(TARGETS dde-wlroots
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    )
 
-install(DIRECTORY ${WLROOTS_SOURCE_DIR}/include/wlr
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-        FILES_MATCHING PATTERN "*.h")
-install(DIRECTORY ${WLR_GENERATED_INCLUDE_DIR}/wlr
+    install(DIRECTORY ${WLROOTS_SOURCE_DIR}/include/wlr
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+            FILES_MATCHING PATTERN "*.h")
+    install(DIRECTORY ${WLR_GENERATED_INCLUDE_DIR}/wlr
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    # Only the generated protocol headers that public wlroots headers include are
+    # needed by consumers (see include/wlr/types/wlr_layer_shell_v1.h and
+    # wlr_output_power_management_v1.h, which include them without a directory
+    # prefix). All other generated protocol headers are internal implementation
+    # details and are deliberately not installed.
+    install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/protocol/wlr-layer-shell-unstable-v1-protocol.h
+        ${CMAKE_CURRENT_BINARY_DIR}/protocol/wlr-output-power-management-unstable-v1-protocol.h
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-# Only the generated protocol headers that public wlroots headers include are
-# needed by consumers (see include/wlr/types/wlr_layer_shell_v1.h and
-# wlr_output_power_management_v1.h, which include them without a directory
-# prefix). All other generated protocol headers are internal implementation
-# details and are deliberately not installed.
-install(FILES
-    ${CMAKE_CURRENT_BINARY_DIR}/protocol/wlr-layer-shell-unstable-v1-protocol.h
-    ${CMAKE_CURRENT_BINARY_DIR}/protocol/wlr-output-power-management-unstable-v1-protocol.h
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()
 
 # ---------------------------------------------------------------------------
 # pkg-config metadata. Every dependency of the static archive is listed in
@@ -616,8 +624,52 @@ string(REPLACE ";" " " DDE_WLROOTS_PC_FEATURES "${DDE_WLROOTS_PC_FEATURES}")
 set(DDE_WLROOTS_PC_VERSION ${WLROOTS_VERSION})
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/dde-wlroots.pc.in
                ${CMAKE_CURRENT_BINARY_DIR}/dde-wlroots.pc @ONLY)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/dde-wlroots.pc
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+if(NOT DDE_WLROOTS_AS_SUBPROJECT)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/dde-wlroots.pc
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+endif()
+
+# ---------------------------------------------------------------------------
+# Export version / feature variables for consumers that build this project as
+# a subdirectory (e.g. Treeland via FetchContent). waylib regenerates its
+# wconfig.h from these. When consumed as an installed package the same
+# information is carried by dde-wlroots.pc (wlroots_version / wlroots_features).
+# ---------------------------------------------------------------------------
+macro(dde_wlroots_export_bool _name _value01)
+    if(${_value01})
+        set(${_name} true CACHE INTERNAL "dde-wlroots feature ${_name}")
+    else()
+        set(${_name} false CACHE INTERNAL "dde-wlroots feature ${_name}")
+    endif()
+endmacro()
+
+set(WLROOTS_VERSION ${WLROOTS_VERSION} CACHE INTERNAL "dde-wlroots version")
+dde_wlroots_export_bool(WLR_HAVE_DRM_BACKEND ${WLR_HAS_DRM_BACKEND})
+dde_wlroots_export_bool(WLR_HAVE_X11_BACKEND ${WLR_HAS_X11_BACKEND})
+dde_wlroots_export_bool(WLR_HAVE_LIBINPUT_BACKEND ${WLR_HAS_LIBINPUT_BACKEND})
+dde_wlroots_export_bool(WLR_HAVE_XWAYLAND ${WLR_HAS_XWAYLAND})
+dde_wlroots_export_bool(WLR_HAVE_GLES2_RENDERER ${WLR_HAS_GLES2_RENDERER})
+dde_wlroots_export_bool(WLR_HAVE_VULKAN_RENDERER ${WLR_HAS_VULKAN_RENDERER})
+dde_wlroots_export_bool(WLR_HAVE_GBM_ALLOCATOR ${WLR_HAS_GBM_ALLOCATOR})
+dde_wlroots_export_bool(WLR_HAVE_SESSION ${WLR_HAS_SESSION})
+dde_wlroots_export_bool(WLR_HAVE_COLOR_MANAGEMENT ${WLR_HAS_COLOR_MANAGEMENT})
+dde_wlroots_export_bool(WLR_HAVE_UDMABUF_ALLOCATOR ${WLR_HAS_UDMABUF_ALLOCATOR})
+
+# Also push into the parent scope when included via add_subdirectory
+# (FetchContent_MakeAvailable uses add_subdirectory under the hood).
+if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(WLROOTS_VERSION ${WLROOTS_VERSION} PARENT_SCOPE)
+    set(WLR_HAVE_DRM_BACKEND ${WLR_HAVE_DRM_BACKEND} PARENT_SCOPE)
+    set(WLR_HAVE_X11_BACKEND ${WLR_HAVE_X11_BACKEND} PARENT_SCOPE)
+    set(WLR_HAVE_LIBINPUT_BACKEND ${WLR_HAVE_LIBINPUT_BACKEND} PARENT_SCOPE)
+    set(WLR_HAVE_XWAYLAND ${WLR_HAVE_XWAYLAND} PARENT_SCOPE)
+    set(WLR_HAVE_GLES2_RENDERER ${WLR_HAVE_GLES2_RENDERER} PARENT_SCOPE)
+    set(WLR_HAVE_VULKAN_RENDERER ${WLR_HAVE_VULKAN_RENDERER} PARENT_SCOPE)
+    set(WLR_HAVE_GBM_ALLOCATOR ${WLR_HAVE_GBM_ALLOCATOR} PARENT_SCOPE)
+    set(WLR_HAVE_SESSION ${WLR_HAVE_SESSION} PARENT_SCOPE)
+    set(WLR_HAVE_COLOR_MANAGEMENT ${WLR_HAVE_COLOR_MANAGEMENT} PARENT_SCOPE)
+    set(WLR_HAVE_UDMABUF_ALLOCATOR ${WLR_HAVE_UDMABUF_ALLOCATOR} PARENT_SCOPE)
+endif()
 
 message(STATUS "dde-wlroots ${WLROOTS_VERSION}: "
     "drm=${WLR_HAS_DRM_BACKEND} libinput=${WLR_HAS_LIBINPUT_BACKEND} "
