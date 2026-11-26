@@ -2082,6 +2082,41 @@ static bool validate_focus_serial(uint16_t last_focus_seq, uint16_t event_seq) {
 	return true;
 }
 
+// Whether `child` sits inside `parent`'s subtree, excluding `parent` itself,
+// walking up at most `max_depth` levels. XEmbed plug windows are plain client
+// children, so xwm never tracks them, yet a real X11 window manager never
+// interferes with focus moving inside one application's hierarchy. Walking up
+// from `child` costs at most `max_depth` synchronous queries, while a top-down
+// search has to visit every window below `parent` before it can answer "no" --
+// the common case for cross-application focus changes.
+static bool window_is_descendant(struct wlr_xwm *xwm, xcb_window_t parent,
+		xcb_window_t child, unsigned int max_depth) {
+	xcb_window_t window = child;
+
+	for (unsigned int depth = 0; depth < max_depth; depth++) {
+		xcb_query_tree_cookie_t cookie = xcb_query_tree(xwm->xcb_conn, window);
+		xcb_query_tree_reply_t *reply =
+			xcb_query_tree_reply(xwm->xcb_conn, cookie, NULL);
+		if (reply == NULL) {
+			return false;
+		}
+
+		xcb_window_t ancestor = reply->parent;
+		free(reply);
+
+		if (ancestor == parent) {
+			return true;
+		}
+		// XCB_NONE means the window vanished; the root ends every hierarchy.
+		if (ancestor == XCB_NONE || ancestor == xwm->screen->root) {
+			return false;
+		}
+		window = ancestor;
+	}
+
+	return false;
+}
+
 static void xwm_handle_focus_in(struct wlr_xwm *xwm,
 		xcb_focus_in_event_t *ev) {
 	// Ignore pointer focus change events
@@ -2112,6 +2147,9 @@ static void xwm_handle_focus_in(struct wlr_xwm *xwm,
 	}
 
 	if (xsurface == NULL || xsurface->surface == NULL) {
+		// Unmanaged windows (most XEmbed children among them) are intentionally
+		// left alone: returning here keeps their real X input focus, which is
+		// what XIM/XIC activation keys off.
 		return;
 	}
 
@@ -2123,7 +2161,19 @@ static void xwm_handle_focus_in(struct wlr_xwm *xwm,
 	bool related_to_focused_window = xwm->focus_surface &&
 			(ev->detail == XCB_NOTIFY_DETAIL_ANCESTOR ||
 			ev->detail == XCB_NOTIFY_DETAIL_INFERIOR);
-	if (same_pid || related_to_focused_window) {
+	// A managed child of the focused surface (WM_TRANSIENT_FOR subwindow) or an
+	// XEmbed plug window reparented into it. This is reported as detail None or
+	// NonlinearVirtual, and the client may well be a separate process, so
+	// neither `same_pid` nor `related_to_focused_window` covers it. Refocusing
+	// the top-level here would strip input focus from the embedder's child and
+	// break anything gated on real X focus, notably input-method activation
+	// through XIM. The self-check skips the round-trip for the common case of a
+	// FocusIn on the already focused window.
+	bool descendant_of_focused = xwm->focus_surface && ev->event != XCB_NONE
+		&& ev->event != xwm->focus_surface->window_id
+		&& window_is_descendant(xwm, xwm->focus_surface->window_id,
+			ev->event, 8);
+	if (same_pid || related_to_focused_window || descendant_of_focused) {
 		xwm_set_focused_window(xwm, xsurface);
 		wl_signal_emit_mutable(&xsurface->events.focus_in, NULL);
 	} else {
