@@ -409,9 +409,10 @@ static bool egl_init(struct wlr_egl *egl, EGLenum platform,
 	}
 
 	size_t atti = 0;
-	EGLint attribs[7];
+	EGLint attribs[9];
 	attribs[atti++] = EGL_CONTEXT_CLIENT_VERSION;
-	attribs[atti++] = 2;
+	const size_t version_index = atti;
+	attribs[atti++] = 3;
 
 	// Request a high priority context if possible
 	// TODO: only do this if we're running as the DRM master
@@ -429,11 +430,21 @@ static bool egl_init(struct wlr_egl *egl, EGLenum platform,
 		attribs[atti++] = EGL_LOSE_CONTEXT_ON_RESET_EXT;
 	}
 
+	// Texture gather needs GLES 3.1. Keep the legacy GLES 2 fallback.
+	const size_t fallback_end = atti;
+	attribs[atti++] = EGL_CONTEXT_MINOR_VERSION_KHR;
+	attribs[atti++] = 1;
 	attribs[atti++] = EGL_NONE;
 	assert(atti <= sizeof(attribs)/sizeof(attribs[0]));
 
 	egl->context = eglCreateContext(egl->display, EGL_NO_CONFIG_KHR,
 		EGL_NO_CONTEXT, attribs);
+	if (egl->context == EGL_NO_CONTEXT) {
+		attribs[version_index] = 2;
+		attribs[fallback_end] = EGL_NONE;
+		egl->context = eglCreateContext(egl->display, EGL_NO_CONFIG_KHR,
+			EGL_NO_CONTEXT, attribs);
+	}
 	if (egl->context == EGL_NO_CONTEXT) {
 		wlr_log(WLR_ERROR, "Failed to create EGL context");
 		return false;
